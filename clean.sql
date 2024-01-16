@@ -1,4 +1,4 @@
-USE supply_chain
+﻿USE supply_chain
 ;
 
 SELECT * FROM zz_original_data
@@ -214,8 +214,8 @@ FROM z_data
 		x categories_departments
 		x orders
 		x orders_ratio
-		orders_demographic
-		shipping
+		x orders_demographic
+		x shipping
 */
 
 /* 
@@ -450,7 +450,7 @@ EXEC sp_rename 'products.Department_Id', 'department_id', 'COLUMN';
 EXEC sp_rename 'products.Product_Price', 'price', 'COLUMN';
 EXEC sp_rename 'products.Product_Description', 'description', 'COLUMN';
 EXEC sp_rename 'products.Product_Image', 'product_image', 'COLUMN';
-EXEC sp_rename 'products.Product_Status', 'product_status', 'COLUMN';
+EXEC sp_rename 'products.Product_Status', 'product_status', 'COLUMN'
 ;
 
 --		check for duplicate rows, there are none
@@ -599,7 +599,7 @@ WHERE object_id = OBJECT_ID('categories_departments')
 EXEC sp_rename 'categories_departments.Category_Id', 'category_id', 'COLUMN';
 EXEC sp_rename 'categories_departments.Category_Name', 'category', 'COLUMN';
 EXEC sp_rename 'categories_departments.Department_Id', 'department_id', 'COLUMN';
-EXEC sp_rename 'categories_departments.Department_Name', 'department', 'COLUMN';
+EXEC sp_rename 'categories_departments.Department_Name', 'department', 'COLUMN'
 ;
 
 --		check for duplicate rows, there are none
@@ -718,6 +718,32 @@ ALTER TABLE orders
 ALTER COLUMN net_sale DECIMAL(10,2);
 ;
 
+--		check for duplicate rows, there are none
+SELECT 
+	transaction_id, 
+	COUNT(*)
+FROM orders
+GROUP BY transaction_id
+HAVING COUNT(*) > 1
+;
+
+--			check nulls, no nulls found
+SELECT *
+FROM orders
+WHERE 
+	order_id IS NULL OR
+	transaction_id IS NULL OR
+	customer_id IS NULL OR
+	order_date IS NULL OR
+	payment_type IS NULL OR
+	product_id IS NULL OR
+	price IS NULL OR
+	quantity IS NULL OR
+	gross_sale IS NULL OR
+	discount_pct IS NULL OR
+	discount IS NULL OR
+	net_sale IS NULL
+;
 
 --		check prices against products
 IF OBJECT_ID('tempdb..#check_price', 'U') IS NOT NULL 
@@ -897,7 +923,7 @@ EXEC sp_rename 'orders_ratio.Order_Item_Total', 'net_sale', 'COLUMN';
 EXEC sp_rename 'orders_ratio.Order_Item_Profit_Ratio', 'item_profit_ratio', 'COLUMN';
 EXEC sp_rename 'orders_ratio.Order_Profit_Per_Order', 'profit_per_order', 'COLUMN';
 EXEC sp_rename 'orders_ratio.Benefit_per_order', 'benefit_per_order', 'COLUMN';
-EXEC sp_rename 'orders_ratio.Sales_per_customer', 'sales_per_customer', 'COLUMN';
+EXEC sp_rename 'orders_ratio.Sales_per_customer', 'sales_per_customer', 'COLUMN'
 ;
 
 --		change order_date datatypes to datetime
@@ -975,43 +1001,218 @@ EXEC sp_rename 'orders_demographic.Order_Country', 'country', 'COLUMN';
 EXEC sp_rename 'orders_demographic.Order_State', 'state', 'COLUMN';
 EXEC sp_rename 'orders_demographic.Order_City', 'city', 'COLUMN';
 EXEC sp_rename 'orders_demographic.Order_Zipcode', 'zipcode', 'COLUMN';
-EXEC sp_rename 'orders_demographic.Order_Status', 'order_status', 'COLUMN';
+EXEC sp_rename 'orders_demographic.Order_Status', 'order_status', 'COLUMN'
 ;
 
+--		change order_date datatypes to datetime
+ALTER TABLE orders_demographic
+ALTER COLUMN order_date DATETIME
+;
+
+--		check for duplicate rows, there are none
+SELECT 
+	transaction_id, 
+	COUNT(*)
+FROM orders_demographic
+GROUP BY transaction_id
+HAVING COUNT(*) > 1
+;
+
+--		check nulls, zipcode nulls will be left as is
+SELECT *
+FROM orders_demographic
+WHERE 
+	order_id IS NULL OR
+	transaction_id IS NULL OR
+	order_date IS NULL OR
+	type IS NULL OR
+	customer_id IS NULL OR
+	latitiude IS NULL OR
+	longitude IS NULL OR
+	market IS NULL OR
+	region IS NULL OR
+	country IS NULL OR
+	city IS NULL OR
+	zipcode IS NULL OR
+	order_status IS NULL
+;
+
+--		check for errors,
+--			country have � character error
+--			fixing error in country, by using CODEPAGE='65001' to import the data using UTF8
+
+IF OBJECT_ID('tempdb..#accents', 'U') IS NOT NULL 
+	DROP TABLE #accents;
+
+CREATE TABLE #accents (
+	transaction_id INT,
+	country NVARCHAR(255) COLLATE SQL_Latin1_General_CP1_CI_AS,
+	state NVARCHAR(255) COLLATE SQL_Latin1_General_CP1_CI_AS,
+	city NVARCHAR(255) COLLATE SQL_Latin1_General_CP1_CI_AS
+	);
+
+BULK INSERT #accents
+FROM 'C:\Users\Olimpio Chris Campos\Desktop\supply chain analysis\data\accented letters.csv'
+WITH (
+	CODEPAGE='65001',
+    FIELDTERMINATOR = ',',
+    ROWTERMINATOR = '\n',
+    FIRSTROW = 2,
+	FORMAT = 'CSV')
+;
+
+SELECT
+	od.transaction_id,
+	od.country,
+	a.country,
+	od.state,
+	a.state,
+	od.city,
+	a.city
+FROM orders_demographic od join #accents a on od.transaction_id = a.transaction_id
+;
+
+UPDATE orders_demographic
+SET 
+	orders_demographic.country = a.country,
+	orders_demographic.state = a.state,
+	orders_demographic.city = a.city
+FROM orders_demographic JOIN #accents a on orders_demographic.transaction_id = a.transaction_id
+;
+
+--			state and city contain error (?) in characters, will be left as in due to raw data having ? as well
+SELECT
+	SUM(CASE WHEN type LIKE '%?%' THEN 1 else 0 END) AS n_errors_type,
+	SUM(CASE WHEN market LIKE '%?%' THEN 1 else 0 END) AS n_errors_market,
+	SUM(CASE WHEN region LIKE '%?%' THEN 1 else 0 END) AS n_errors_region,
+	SUM(CASE WHEN country LIKE '%?%' THEN 1 else 0 END) AS n_errors_country,
+	SUM(CASE WHEN state LIKE '%?%' THEN 1 else 0 END) AS n_errors_state,
+	SUM(CASE WHEN city LIKE '%?%' THEN 1 else 0 END) AS n_errors_city,
+	SUM(CASE WHEN zipcode LIKE '%?%' THEN 1 else 0 END) AS n_errors_zipcode,
+	SUM(CASE WHEN order_status LIKE '%?%' THEN 1 else 0 END) AS n_errors_order_status
+FROM orders_demographic
+;
+
+SELECT *
+FROM orders_demographic
+WHERE state LIKE '%?%'
+;
+
+SELECT *
+FROM orders_demographic
+WHERE city LIKE '%?%'
+;
 
 --	select
 SELECT * FROM orders_demographic
 ;
 
+/* 
+	clean shipping table
+*/
 
+--		table information
+SELECT 
+	column_name, 
+	data_type, 
+	character_maximum_length
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'shipping'
+;
 
+--		rename column names
+SELECT name
+FROM sys.columns 
+WHERE object_id = OBJECT_ID('shipping')
+;
 
+EXEC sp_rename 'shipping.Order_Id', 'order_id', 'COLUMN';
+EXEC sp_rename 'shipping.Order_Item_Id', 'transaction_id', 'COLUMN';
+EXEC sp_rename 'shipping.order_date_DateOrders', 'order_order_date', 'COLUMN';
+EXEC sp_rename 'shipping.Order_Customer_Id', 'customer_id', 'COLUMN';
+EXEC sp_rename 'shipping.Order_Item_Cardprod_Id', 'product_id', 'COLUMN';
+EXEC sp_rename 'shipping.shipping_date_DateOrders', 'shipping_date', 'COLUMN';
+EXEC sp_rename 'shipping.Shipping_Mode', 'mode', 'COLUMN';
+EXEC sp_rename 'shipping.Days_for_shipment_scheduled', 'days_shipping_scheduled', 'COLUMN';
+EXEC sp_rename 'shipping.Days_for_shipping_real', 'days_shipping_real', 'COLUMN';
+EXEC sp_rename 'shipping.Delivery_Status', 'delivery_status', 'COLUMN';
+EXEC sp_rename 'shipping.Late_delivery_risk', 'risk', 'COLUMN'
+;
 
+--		change order_date datatypes to datetime
+ALTER TABLE shipping
+ALTER COLUMN order_order_date DATETIME
+ALTER TABLE shipping
+ALTER COLUMN order_date DATETIME
+;
 
+--		check for duplicate rows, there are none
+SELECT 
+	transaction_id, 
+	COUNT(*)
+FROM shipping
+GROUP BY transaction_id
+HAVING COUNT(*) > 1
+;
 
-
-
-
-
-	-- check for error (?) in characters, there are none
-DECLARE @char_error CHAR(1) = '?';
-
+--		check nulls, no nulls
 SELECT *
-FROM orders_demographic
-WHERE EXISTS (
-    SELECT 1
-    FROM INFORMATION_SCHEMA.COLUMNS
-    WHERE TABLE_NAME = 'orders_demographic'
-        AND DATA_TYPE IN ('NVARCHAR')
-        AND CHARACTER_MAXIMUM_LENGTH >= LEN(@char_error)
-        AND (
-            CHARINDEX(@char_error, Type) > 0 OR
-            CHARINDEX(@char_error, market) > 0 OR
-			CHARINDEX(@char_error, region) > 0 OR
-			CHARINDEX(@char_error, country) > 0 OR
-			CHARINDEX(@char_error, state) > 0 OR
-			CHARINDEX(@char_error, city) > 0 OR
-			CHARINDEX(@char_error, zipcode) > 0 OR
-			CHARINDEX(@char_error, order_status) > 0 
-        )
-);
+FROM shipping
+WHERE 
+	order_id IS NULL OR
+	transaction_id IS NULL OR
+	order_order_date IS NULL OR
+	product_id IS NULL OR
+	shipping_date IS NULL OR
+	mode IS NULL OR
+	days_shipping_scheduled IS NULL OR
+	days_shipping_real IS NULL OR
+	delivery_status IS NULL OR
+	risk IS NULL
+;
+
+--		check for errors, no errors found
+SELECT 
+	days_shipping_scheduled,
+	COUNT(*) AS n
+FROM shipping
+GROUP BY days_shipping_scheduled
+ORDER BY COUNT(*) DESC
+;
+
+SELECT 
+	days_shipping_real,
+	COUNT(*) AS n
+FROM shipping
+GROUP BY days_shipping_real
+ORDER BY COUNT(*) DESC
+;
+
+SELECT 
+	mode,
+	COUNT(*) AS n
+FROM shipping
+GROUP BY mode
+ORDER BY COUNT(*) DESC
+;
+
+SELECT 
+	delivery_status,
+	COUNT(*) AS n
+FROM shipping
+GROUP BY delivery_status
+ORDER BY COUNT(*) DESC
+;
+
+SELECT 
+	risk,
+	COUNT(*) AS n
+FROM shipping
+GROUP BY risk
+ORDER BY COUNT(*) DESC
+;
+
+--		select
+SELECT *
+FROM shipping
+;
