@@ -1216,3 +1216,7 @@ ORDER BY COUNT(*) DESC
 SELECT *
 FROM shipping
 ;
+
+/*
+		Database is ready for analysis
+*/
