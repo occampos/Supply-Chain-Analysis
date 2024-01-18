@@ -1128,7 +1128,7 @@ WHERE object_id = OBJECT_ID('shipping')
 
 EXEC sp_rename 'shipping.Order_Id', 'order_id', 'COLUMN';
 EXEC sp_rename 'shipping.Order_Item_Id', 'transaction_id', 'COLUMN';
-EXEC sp_rename 'shipping.order_date_DateOrders', 'order_order_date', 'COLUMN';
+EXEC sp_rename 'shipping.order_date_DateOrders', 'order_date', 'COLUMN';
 EXEC sp_rename 'shipping.Order_Customer_Id', 'customer_id', 'COLUMN';
 EXEC sp_rename 'shipping.Order_Item_Cardprod_Id', 'product_id', 'COLUMN';
 EXEC sp_rename 'shipping.shipping_date_DateOrders', 'shipping_date', 'COLUMN';
@@ -1141,9 +1141,9 @@ EXEC sp_rename 'shipping.Late_delivery_risk', 'risk', 'COLUMN'
 
 --		change order_date datatypes to datetime
 ALTER TABLE shipping
-ALTER COLUMN order_order_date DATETIME
-ALTER TABLE shipping
 ALTER COLUMN order_date DATETIME
+ALTER TABLE shipping
+ALTER COLUMN shipping_date DATETIME
 ;
 
 --		check for duplicate rows, there are none
@@ -1161,7 +1161,7 @@ FROM shipping
 WHERE 
 	order_id IS NULL OR
 	transaction_id IS NULL OR
-	order_order_date IS NULL OR
+	order_date IS NULL OR
 	product_id IS NULL OR
 	shipping_date IS NULL OR
 	mode IS NULL OR
