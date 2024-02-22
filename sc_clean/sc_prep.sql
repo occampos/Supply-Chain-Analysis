@@ -162,4 +162,4 @@ SELECT * FROM fact_forecast_monthly;
 
 -- Add calculated columns: net_invoice_sales, net_sales, cost_of_goods, gross_margin, net_profit
 
-
+beans straight up
