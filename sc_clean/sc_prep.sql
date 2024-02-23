@@ -2,6 +2,9 @@
 SET SQL_SAFE_UPDATES = 0;
 SHOW PROCESSLIST;
 
+USE gdb041;
+USE gdb056;
+
 	-- Show tables and columns to copy
 USE gdb056;
 SHOW TABLES;
@@ -116,7 +119,7 @@ DROP TABLE IF EXISTS gdb041.pre_invoice_deductions ;
 CREATE TABLE gdb041.pre_invoice_deductions (
     customer_code VARCHAR(255),
     fiscal_year INT,
-    pre_invoice_discount_pct DECIMAL(25,20))
+    pre_invoice_discount_pct DECIMAL(15,10))
 ;
     
 INSERT INTO gdb041.pre_invoice_deductions (
@@ -132,9 +135,6 @@ FROM gdb056.pre_invoice_deductions
 
 SELECT COUNT(*) FROM gdb056.pre_invoice_deductions;
 SELECT COUNT(*) FROM gdb041.pre_invoice_deductions;
-
--- Drop redundant database
-DROP DATABASE IF EXISTS gdb056;
 
 -- Drop redundant columns
 USE gdb041;
@@ -209,20 +209,122 @@ SET fiscal_year = CASE WHEN MONTH(date) >=9 THEN YEAR(DATE_ADD(date, INTERVAL 4 
 
 SELECT * FROM fact_forecast_monthly;
 
--- Add calculated columns: gross_sales, net_invoice_sales, net_sales, cost_of_goods, gross_margin, net_profit
+	-- post_invoice_deductions
+SELECT * FROM post_invoice_deductions;
 
-	-- gross_sales
+SELECT DISTINCT
+	date,
+	MONTH(date) AS month_number,
+    CASE WHEN MONTH(date) >=9 THEN DATE_ADD(date, INTERVAL 4 MONTH) ELSE date END AS fiscal_date
+FROM post_invoice_deductions
+;
+
+ALTER TABLE post_invoice_deductions
+ADD COLUMN fiscal_date DATE
+;
+
+UPDATE post_invoice_deductions
+SET fiscal_date =  CASE WHEN MONTH(date) >=9 THEN DATE_ADD(date, INTERVAL 4 MONTH) ELSE date END
+;
+
+-- Create indexes
+
+	-- Check for existing indexes to avoid duplicates
+SELECT
+    table_name,
+    index_name,
+    GROUP_CONCAT(column_name ORDER BY seq_in_index) AS columns,
+    index_type
+FROM
+    information_schema.statistics
+WHERE
+    table_schema = 'gdb041'
+GROUP BY
+    table_name, index_name
+;
+
+		-- dim_customer
+SELECT * FROM dim_customer;
+  
+CREATE UNIQUE INDEX dim_customer_customer_code ON dim_customer (customer_code);
+
+		-- dim_market
+SELECT * FROM dim_market;
+
+CREATE UNIQUE INDEX dim_market_market ON dim_market (market);
+
+		-- dim_product
+SELECT * FROM dim_product;
+  
+CREATE UNIQUE INDEX dim_product_product_code ON dim_product (product_code);
+
+		-- fact_forecast_monthly
+SELECT * FROM fact_forecast_monthly;
+
+CREATE INDEX forecast_product_code_customer_code_fiscal_year ON fact_forecast_monthly (product_code, customer_code, fiscal_year);
+CREATE INDEX forecast_product_code_fiscal ON fact_forecast_monthly (product_code, fiscal_year);
+CREATE INDEX forecast_customer_code_fiscal ON fact_forecast_monthly (customer_code, fiscal_year);
+   
+		-- fact_sales_monthly
+SELECT * FROM fact_sales_monthly;
+
+CREATE INDEX sales_product_code_customer_code_fiscal_year ON fact_sales_monthly (product_code, customer_code, fiscal_year);
+CREATE INDEX sales_product_code_fiscal ON fact_sales_monthly (product_code, fiscal_year);
+CREATE INDEX sales_customer_code_fiscal ON fact_sales_monthly (customer_code, fiscal_year);
+
+		-- freight_cost
+SELECT * FROM freight_cost;
+
+CREATE INDEX freight_cost_market_fiscal ON freight_cost (market, fiscal_year);
+
+		-- gross_price
+SELECT * FROM gross_price;
+
+CREATE INDEX gross_price_product_code_fiscal ON gross_price (product_code, fiscal_year);
+
+		-- manufacturing_cost
+SELECT * FROM manufacturing_cost;
+
+CREATE INDEX manufacturing_product_code_cost_year ON manufacturing_cost (product_code, cost_year);
+
+		-- post_invoice_deductions
+SELECT * FROM post_invoice_deductions;
+
+CREATE INDEX post_invoice_customer_product ON post_invoice_deductions (customer_code, product_code, fiscal_date);
+
+		-- pre_invoice_deductions
+SELECT * FROM pre_invoice_deductions;
+
+CREATE INDEX pre_invoice_customer ON pre_invoice_deductions (customer_code, fiscal_year);
+
+	-- Check duplicate indexes
+SELECT
+    table_name,
+    index_name,
+    GROUP_CONCAT(column_name ORDER BY seq_in_index) AS columns,
+    index_type
+FROM
+    information_schema.statistics
+WHERE
+    table_schema = 'gdb041'
+GROUP BY
+    table_name, index_name
+;
+    
+-- Add calculated columns in fact_sales_monthly: gross_sales, net_invoice_sales, net_sales, cost_of_goods, gross_margin, net_profit
+
+	-- Calculate gross_sale = sold_quantity * gross_price
 SELECT * FROM fact_sales_monthly;
 SELECT * FROM gross_price;
 
-		-- Calculate gross sale = sold_quantity * gross_price
 SELECT 
 	*,
-    sold_quantity * gross_price AS gross_sales
+    ROUND(sold_quantity * gross_price, 15) AS gross_sale
 FROM fact_sales_monthly fas LEFT JOIN gross_price gp 
 	ON fas.product_code = gp.product_code 
     AND fas.fiscal_year = gp.fiscal_year
 ;
+
 		-- Create and insert gross_sale column into fact_sales_monthly
 ALTER TABLE fact_sales_monthly
 DROP COLUMN gross_sale
@@ -234,22 +336,45 @@ ADD COLUMN gross_sale DECIMAL(15, 10)
 
 UPDATE fact_sales_monthly AS fas
 	LEFT JOIN gross_price AS gp ON fas.product_code = gp.product_code AND fas.fiscal_year = gp.fiscal_year
-SET fas.gross_sale = fas.sold_quantity * gp.gross_price
+SET fas.gross_sale = CAST((sold_quantity * gross_price) AS DECIMAL(15, 10))
 ;
 
+	-- Calculate net_invoice_sales = gross_sale - (gross_sale * pre_invoice_discount_amount)
 SELECT * FROM fact_sales_monthly;
-
-	-- net_invoice_sales
 SELECT * FROM pre_invoice_deductions;
 
 SELECT 
 	*,
-    sold_quantity * gross_price AS gross_sale,
-    (sold_quantity * gross_price) * pre_invoice_discount_pct AS pre_invoice_discount,
-    (sold_quantity * gross_price) - ((sold_quantity * gross_price) * pre_invoice_discount_pct) AS net_invoice_sale
-FROM fact_sales_monthly fas LEFT JOIN gross_price gp 
-	ON fas.product_code = gp.product_code 
-    AND fas.fiscal_year = gp.fiscal_year LEFT JOIN pre_invoice_deductions pid
+    gross_sale * pre_invoice_discount_pct AS pre_invoice_discount_amount,
+    gross_sale - (gross_sale * pre_invoice_discount_pct) AS net_invoice_sale
+FROM fact_sales_monthly fas LEFT JOIN pre_invoice_deductions pid
     ON fas.customer_code = pid.customer_code 
     AND fas.fiscal_year = pid.fiscal_year
 ;
+
+		-- Create and insert gross_sale column into fact_sales_monthly
+ALTER TABLE fact_sales_monthly
+DROP COLUMN net_invoice_sale
+;
+
+ALTER TABLE fact_sales_monthly
+ADD COLUMN net_invoice_sale DECIMAL(15, 10)
+;
+
+UPDATE fact_sales_monthly AS fas
+	LEFT JOIN pre_invoice_deductions pid
+    ON fas.customer_code = pid.customer_code 
+    AND fas.fiscal_year = pid.fiscal_year
+SET fas.net_invoice_sale = CAST((gross_sale - (gross_sale * pre_invoice_discount_pct)) AS DECIMAL(15, 10))
+;
+
+	-- Calculate net_sale = net_invoice_sale -
+SELECT * FROM fact_sales_monthly;
+SELECT FROM post_invoice_deductions;
+
+SELECT 
+	*
+FROM fact_sales_monthly fas LEFT JOIN post_invoice_deductions pod
+	ON fas.fiscal_year = (SELECT YEAR(pod.fiscal_date) FROM post_invoice_deductions) 
+	AND fas.product_code = pod.product_code
+	AND fas.customer_code = pod.customer_code
