@@ -143,6 +143,8 @@ USE gdb041;
 DESCRIBE fact_sales_monthly;
 
 ALTER TABLE fact_sales_monthly
+DROP COLUMN product,
+DROP COLUMN customer_name,
 DROP COLUMN division,
 DROP COLUMN category,
 DROP COLUMN market,
@@ -156,6 +158,8 @@ SELECT * FROM fact_sales_monthly;
 DESCRIBE fact_forecast_monthly;
 
 ALTER TABLE fact_forecast_monthly
+DROP COLUMN product,
+DROP COLUMN customer_name,
 DROP COLUMN division,
 DROP COLUMN category,
 DROP COLUMN market,
@@ -220,13 +224,14 @@ FROM post_invoice_deductions
 ;
 
 ALTER TABLE post_invoice_deductions
-ADD COLUMN fiscal_date DATE
+ADD COLUMN fiscal_year INT
 ;
 
 UPDATE post_invoice_deductions
-SET fiscal_date =  CASE WHEN MONTH(date) >=9 THEN DATE_ADD(date, INTERVAL 4 MONTH) ELSE date END
+SET fiscal_year = CASE WHEN MONTH(date) >=9 THEN YEAR(DATE_ADD(date, INTERVAL 4 MONTH)) ELSE YEAR(date) END
 ;
 
+/*
 -- Create indexes
 
 	-- Check for existing indexes to avoid duplicates
@@ -310,10 +315,12 @@ WHERE
 GROUP BY
     table_name, index_name
 ;
-    
+/*
 -- Add calculated columns in fact_sales_monthly: gross_sales, net_invoice_sales, net_sales, cost_of_goods, gross_margin, net_profit
 
-	-- Calculate gross_sale = sold_quantity * gross_price
+    -- gross_sale
+
+	    -- Calculate gross_sale = sold_quantity * gross_price
 SELECT * FROM fact_sales_monthly;
 SELECT * FROM gross_price;
 
@@ -334,12 +341,15 @@ ALTER TABLE fact_sales_monthly
 ADD COLUMN gross_sale DECIMAL(15, 10)
 ;
 
-UPDATE fact_sales_monthly AS fas
-	LEFT JOIN gross_price AS gp ON fas.product_code = gp.product_code AND fas.fiscal_year = gp.fiscal_year
+UPDATE fact_sales_monthly AS fas LEFT JOIN gross_price AS gp 
+	ON fas.product_code = gp.product_code 
+	AND fas.fiscal_year = gp.fiscal_year
 SET fas.gross_sale = CAST((sold_quantity * gross_price) AS DECIMAL(15, 10))
 ;
 
-	-- Calculate net_invoice_sales = gross_sale - (gross_sale * pre_invoice_discount_amount)
+    -- net_invoice_sale
+
+	    -- Calculate net_invoice_sale = gross_sale - (gross_sale * pre_invoice_discount_amount)
 SELECT * FROM fact_sales_monthly;
 SELECT * FROM pre_invoice_deductions;
 
@@ -352,7 +362,7 @@ FROM fact_sales_monthly fas LEFT JOIN pre_invoice_deductions pid
     AND fas.fiscal_year = pid.fiscal_year
 ;
 
-		-- Create and insert gross_sale column into fact_sales_monthly
+		-- Create and insert net_invoice_sale column into fact_sales_monthly
 ALTER TABLE fact_sales_monthly
 DROP COLUMN net_invoice_sale
 ;
@@ -361,20 +371,45 @@ ALTER TABLE fact_sales_monthly
 ADD COLUMN net_invoice_sale DECIMAL(15, 10)
 ;
 
-UPDATE fact_sales_monthly AS fas
-	LEFT JOIN pre_invoice_deductions pid
+UPDATE fact_sales_monthly AS fas LEFT JOIN pre_invoice_deductions pid
     ON fas.customer_code = pid.customer_code 
     AND fas.fiscal_year = pid.fiscal_year
 SET fas.net_invoice_sale = CAST((gross_sale - (gross_sale * pre_invoice_discount_pct)) AS DECIMAL(15, 10))
 ;
 
-	-- Calculate net_sale = net_invoice_sale -
-SELECT * FROM fact_sales_monthly;
-SELECT FROM post_invoice_deductions;
+    -- net_sale
 
-SELECT 
-	*
-FROM fact_sales_monthly fas LEFT JOIN post_invoice_deductions pod
-	ON fas.fiscal_year = (SELECT YEAR(pod.fiscal_date) FROM post_invoice_deductions) 
+	    -- Calculate net_sale = net_invoice_sale - (post_invoice_deduction + other_deduction)
+SELECT * FROM fact_sales_monthly;
+SELECT * FROM post_invoice_deductions;
+
+WITH cte AS (
+	SELECT 
+		fas.date,
+        fas.product_code,
+        fas.customer_code,
+        fas.sold_quantity,
+        fas.fiscal_year,
+        fas.gross_sale,
+        fas.net_invoice_sale,
+		gross_sale * discounts_pct AS post_invoice_deduction_amount,
+		gross_sale * other_deductions_pct AS other_deduction_amount
+	FROM fact_sales_monthly fas LEFT JOIN post_invoice_deductions pod
+		ON fas.date = pod.date
+		AND fas.product_code = pod.product_code
+		AND fas.customer_code = pod.customer_code)
+SELECT
+    net_invoice_sale - (post_invoice_deduction_amount + other_deduction_amount) AS net_sale
+FROM cte
+;
+
+ALTER TABLE fact_sales_monthly
+ADD COLUMN net_sale DECIMAL(15, 10)
+;
+
+UPDATE fact_sales_monthly fas LEFT JOIN post_invoice_deductions pod
+	ON fas.date = pod.date
 	AND fas.product_code = pod.product_code
 	AND fas.customer_code = pod.customer_code
+SET fas.net_invoice_sale = CAST(net_invoice_sale - ((gross_sale * discounts_pct) + (gross_sale * other_deductions_pct)) AS DECIMAL(15, 10))
+;
