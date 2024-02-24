@@ -5,6 +5,14 @@ SHOW PROCESSLIST;
 USE gdb041;
 USE gdb056;
 
+	-- Optimize datatypes
+
+DESCRIBE dim_customer;
+DESCRIBE dim_market;
+DESCRIBE dim_product;
+DESCRIBE fact_forecast_monthly;
+DESCRIBE fact_sales_monthly;
+
 	-- Show tables and columns to copy
 USE gdb056;
 SHOW TABLES;
